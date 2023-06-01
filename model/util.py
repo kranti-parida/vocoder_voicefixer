@@ -127,6 +127,22 @@ def linear_to_mel(spectogram):
     _mel_basis = build_mel_basis()
     return np.dot(_mel_basis, spectogram)
 
+def load_checkpoint(checkpoint_path, device):
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    return checkpoint
+
+def load_try(state, model):
+    model_dict = model.state_dict()
+    try:
+        model_dict.update(state)
+        model.load_state_dict(model_dict)
+    except RuntimeError as e:
+        print(str(e))
+        model_dict = model.state_dict()
+        for k, v in state.items():
+            model_dict[k] = v
+            model.load_state_dict(model_dict)
+
 
 if __name__ == "__main__":
     data = torch.randn((3, 5, 100))

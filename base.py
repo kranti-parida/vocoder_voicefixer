@@ -1,12 +1,15 @@
 import os
 import numpy as np
+import torch.nn as nn
+import torch
+import librosa
 
 from model.generator import Generator
 from config import Config
 
 from utils.wav_util import read_wave, save_wave
-from model.util import linear_to_mel, normalize, amp_to_db, pre
-from utils.pytorch_util import try_tensor_cuda, check_cuda_availability
+from model.util import linear_to_mel, normalize, amp_to_db, pre, load_checkpoint, load_try
+from utils.pytorch_util import try_tensor_cuda, check_cuda_availability, tensor2numpy
 
 
 class Vocoder(nn.Module):
@@ -15,9 +18,7 @@ class Vocoder(nn.Module):
         Config.refresh(sample_rate)
         self.rate = sample_rate
         if(not os.path.exists(Config.ckpt)):
-            raise RuntimeError("Error 1: The checkpoint for synthesis module / vocoder (model.ckpt-1490000_trimed) is not found in ~/.cache/voicefixer/synthesis_module/44100. \
-                                By default the checkpoint should be download automatically by this program. Something bad may happened. Apologies for the inconvenience.\
-                                But don't worry! Alternatively you can download it directly from Zenodo: https://zenodo.org/record/5600188/files/model.ckpt-1490000_trimed.pt?download=1")
+            raise RuntimeError("Model not found. Please download the model")
         self._load_pretrain(Config.ckpt)
         self.weight_torch = Config.get_mel_weight_torch(percent=1.0)[None, None, None, ...]
 
@@ -61,12 +62,8 @@ class Vocoder(nn.Module):
         wav = read_wave(fpath, sample_rate=self.rate)[..., 0]
         wav = wav / np.max(np.abs(wav))
         stft = np.abs(
-            librosa.stft(
-                wav,
-                hop_length=Config.hop_length,
-                win_length=Config.win_size,
-                n_fft=Config.n_fft,
-            )
+            librosa.stft(wav, 
+                hop_length=Config.hop_length, win_length=Config.win_size, n_fft=Config.n_fft,)
         )
         mel = linear_to_mel(stft)
         mel = normalize(amp_to_db(np.abs(mel)) - 20)
@@ -79,10 +76,8 @@ class Vocoder(nn.Module):
 
 if __name__ == "__main__":
     model = Vocoder(sample_rate=44100)
-    print(model.device)
-
-
-    # model.load_pretrain(Config.ckpt)
-    # model.oracle(path="/Users/liuhaohe/Desktop/test.wav",
-    #         sample_rate=44100,
-    #         save_dir="/Users/liuhaohe/Desktop/test_vocoder.wav")
+    model.oracle(
+                fpath='./input_samples/sample3.wav', 
+                out_path='./reconstructed_res/sample3.wav', 
+                cuda=True
+                )

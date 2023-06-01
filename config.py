@@ -7,10 +7,7 @@ class Config:
     @classmethod
     def refresh(cls, sr):
         if sr == 44100:
-            Config.ckpt = os.path.join(
-                os.path.expanduser("~"),
-                ".cache/voicefixer/synthesis_module/44100/model.ckpt-1490000_trimed.pt",
-            )
+            Config.ckpt = './pre_trained_models/model.ckpt-1490000_trimed.pt'
             Config.cond_channels = 512
             Config.m_channels = 768
             Config.resstack_depth = [8, 8, 8, 8]

@@ -13,3 +13,9 @@ def try_tensor_cuda(tensor, cuda):
         return tensor.cuda()
     else:
         return tensor.cpu()
+
+def tensor2numpy(tensor):
+    if "cuda" in str(tensor.device):
+        return tensor.detach().cpu().numpy()
+    else:
+        return tensor.detach().numpy()
