@@ -20,12 +20,13 @@ class ConvBlockRes(nn.Module):
     # https://github.com/haoheliu/voicefixer/blob/main/voicefixer/restorer/model_kqq_bn.py
     def __init__(self, in_channels, out_channels, size, stride_val, momentum=0.01):
         super(ConvBlockRes, self).__init__()
-
+        pad = size//2
         self.conv1 = nn.Conv2d(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=(size, size),
             stride=(stride_val, stride_val),
+            padding=(pad, pad),
             bias=False,
         )
         self.bn1 = nn.BatchNorm2d(in_channels, momentum=momentum)
@@ -34,20 +35,15 @@ class ConvBlockRes(nn.Module):
             out_channels=out_channels,
             kernel_size=(size, size),
             stride=(stride_val, stride_val),
+            padding=(pad, pad),
             bias=False,
         )
         self.bn2 = nn.BatchNorm2d(out_channels, momentum=momentum)
-        if in_channels != out_channels:
-            self.shortcut = nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel_size=(1, 1),
-                stride=(1, 1),
-                padding=(0, 0),
-            )
-            self.is_shortcut = True
+        
+        if stride_val != 1:
+            self.residual = False
         else:
-            self.is_shortcut = False
+            self.residual = True
 
         self.init_weights()
 
@@ -56,19 +52,15 @@ class ConvBlockRes(nn.Module):
         init_layer(self.conv1)
         init_layer(self.conv2)
 
-        if self.is_shortcut:
-            init_layer(self.shortcut)
-
     def forward(self, x):
-        import pdb; pdb.set_trace()
         origin = x
         x = self.conv1(F.leaky_relu_(self.bn1(x), negative_slope=0.01))
         x = self.conv2(F.leaky_relu_(self.bn2(x), negative_slope=0.01))
 
-        if self.is_shortcut:
-            return self.shortcut(origin) + x
-        else:
+        if self.residual:
             return origin + x
+        else:
+            return x
 
 
 class Discriminator(nn.Module):
@@ -116,11 +108,9 @@ class FrequencyDiscriminator(nn.Module):
         self.window = self.window.to(x.device)
         x_stft = torch.stft(x, self.fft_size, self.hop_length, self.win_length, self.window, return_complex=False)
         x_stft = x_stft.permute(0, 3, 1, 2)
-        import pdb; pdb.set_trace()
         x = self.disc(x_stft)
 
-        
-        return None
+        return x
 
 
 if __name__ == '__main__':
@@ -130,6 +120,7 @@ if __name__ == '__main__':
     print(x.shape)
 
     y = model(x)
+    print(y.shape)
 
     pytorch_total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(pytorch_total_params)
