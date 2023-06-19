@@ -15,6 +15,8 @@ from model.util import load_try, build_mel_basis, tr_amp_to_db, tr_normalize, tr
 from config import Config
 from utils.utils import load_checkpoint, scan_checkpoint, save_checkpoint, build_env, AttrDict, get_mel_pytorch
 
+from losses import timeLoss, specLoss
+
 class Vocoder(torch.nn.Module):
     def __init__(self, sample_rate):
         super(Vocoder, self).__init__()
@@ -110,14 +112,23 @@ def train(config):
 
     model.train()
 
+
     ## loss function
     losses_std_avg = 0.0
     losses_tb_avg = 0.0
+    loss_mel_tb_avg, loss_spec_tb_avg, loss_time_tb_avg = 0.0, 0.0, 0.0
     std_ctr = 0
     tb_ctr = 0
 
+    mel_recon_loss = torch.nn.MSELoss(reduction='mean')
+    spec_loss_fun = specLoss(lam_mag = opt.lam_mag, lam_sc = opt.lam_sc)
+    time_loss_fun = timeLoss(lam_seg = opt.lam_seg, 
+                lam_energy = opt.lam_energy,
+                lam_phase = opt.lam_phase)
+
     window = torch.hann_window(Config.n_fft).to(device)
     mel_basis = torch.from_numpy(build_mel_basis()).to(device)
+
 
     for epoch in range(max(0, last_epoch), config.train_epochs):
         start = time.time()
@@ -133,14 +144,28 @@ def train(config):
 
             out_time = model(inp_mel, cuda=True)
 
+            ## check here the extra dimension/ unsqueeze
+            out_mel = get_mel_pytorch(out_time, Config.n_fft, Config.hop_length,
+                                        Config.win_size, window, mel_basis)
+
             import pdb; pdb.set_trace()
 
             optim.zero_grad()
 
-            loss = loss_fn(out_time, inp_time)
+            ## multiple losses
 
+            loss_mel = mel_recon_loss(recon_pred_mel, recon_gt_mel)
+            loss_spec = spec_loss_fun(pred_time, gt_time)
+            loss_time = time_loss_fun(pred_time, gt_time)
+            
+            loss = opt.lam_mel*loss_mel + loss_spec + loss_time
+
+            ## log losses
             losses_std_avg += loss.item()
             losses_tb_avg += loss.item()
+            loss_mel_tb_avg += loss_mel.item()
+            loss_spec_tb_avg += loss_spec.item()
+            loss_time_tb_avg += loss_time.item()
             std_ctr += 1
             tb_ctr += 1
 
@@ -169,7 +194,11 @@ def train(config):
                 losses_tb_avg /= tb_ctr
                 sw.add_scalar("training/loss_avg", losses_tb_avg, steps)
                 sw.add_scalar("training/loss", loss.item(), steps)
+                sw.add_scalar("training/loss_mel_avg", loss_mel_tb_avg, steps)
+                sw.add_scalar("training/loss_spec_avg", loss_spec_tb_avg, steps)
+                sw.add_scalar("training/loss_time_avg", loss_time_tb_avg, steps)
                 losses_tb_avg = 0.0
+                loss_mel_tb_avg, loss_spec_tb_avg, loss_time_tb_avg = 0.0, 0.0, 0.0
                 tb_ctr = 0
 
             if steps % config.validation_interval == 0:
