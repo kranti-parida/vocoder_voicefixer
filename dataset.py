@@ -28,6 +28,7 @@ class wav_mel_dataset(torch.utils.data.Dataset):
         if (start + nsamples > wav.shape[0]) or (wav.shape[0] < 500*44100):
             return self.__getitem__(index)
         wav = wav[start : start + nsamples]
+        wav = wav / np.max(np.abs(wav))
 
         return {
                 'wav': wav,

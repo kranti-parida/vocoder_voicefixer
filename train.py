@@ -9,11 +9,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset import wav_mel_dataset, get_dataset
 from model.generator import Generator
-from model.util import load_try
+from model.util import load_try, build_mel_basis, tr_amp_to_db, tr_normalize, tr_pre
 
 
 from config import Config
-from utils.utils import load_checkpoint, scan_checkpoint, save_checkpoint, build_env, AttrDict
+from utils.utils import load_checkpoint, scan_checkpoint, save_checkpoint, build_env, AttrDict, get_mel_pytorch
 
 class Vocoder(torch.nn.Module):
     def __init__(self, sample_rate):
@@ -36,10 +36,7 @@ class Vocoder(torch.nn.Module):
         :return: [batchsize, 1, samples]
         """
         assert mel.size()[-1] == 128
-        check_cuda_availability(cuda=cuda)
-        self.model = try_tensor_cuda(self.model, cuda=cuda)
-        mel = try_tensor_cuda(mel, cuda=cuda)
-        self.weight_torch = self.weight_torch.type_as(mel)
+        # self.weight_torch = self.weight_torch.type_as(mel)
         # mel = mel / self.weight_torch
         mel = tr_normalize(tr_amp_to_db(torch.abs(mel)) - 20.0)
         mel = tr_pre(mel[:, 0, ...])
@@ -60,6 +57,7 @@ def train(config):
     
     # load model
     model = Vocoder(config.sample_rate)
+    model = model.to(device)
 
     ## load pre-trained model here
     
@@ -118,6 +116,9 @@ def train(config):
     std_ctr = 0
     tb_ctr = 0
 
+    window = torch.hann_window(Config.n_fft).to(device)
+    mel_basis = torch.from_numpy(build_mel_basis()).to(device)
+
     for epoch in range(max(0, last_epoch), config.train_epochs):
         start = time.time()
         print(f"Epoch: {epoch}")
@@ -126,11 +127,13 @@ def train(config):
             start_b = time.time()
             inp_time = batch['wav'].to(device)
             
-            import pdb; pdb.set_trace()
             ## convert the input time signal to melspectrogram
-            # inp_mel 
+            inp_mel = get_mel_pytorch(inp_time, Config.n_fft, Config.hop_length, 
+                                        Config.win_size,window, mel_basis)
 
             out_time = model(inp_mel, cuda=True)
+
+            import pdb; pdb.set_trace()
 
             optim.zero_grad()
 

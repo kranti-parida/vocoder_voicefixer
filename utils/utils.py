@@ -35,3 +35,14 @@ class AttrDict(dict):
     def __init__(self, *args, **kwargs):
         super(AttrDict, self).__init__(*args, **kwargs)
         self.__dict__ = self
+
+
+def get_mel_pytorch(wav, NFFT, HOP_LEN, WIN_SIZE, WIN, MEL_BASIS):
+    stft_torch = torch.stft(wav, n_fft=NFFT, hop_length=HOP_LEN, 
+                    win_length=WIN_SIZE, window=WIN, center=True, return_complex=True)
+    
+    stft_torch = torch.abs(stft_torch)
+    mel_torch = MEL_BASIS @ stft_torch
+    mel_torch = mel_torch.unsqueeze(1).permute(0, 1, 3, 2)
+
+    return mel_torch
