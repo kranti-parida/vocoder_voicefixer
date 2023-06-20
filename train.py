@@ -121,10 +121,10 @@ def train(config):
     tb_ctr = 0
 
     mel_recon_loss = torch.nn.MSELoss(reduction='mean')
-    spec_loss_fun = specLoss(lam_mag = opt.lam_mag, lam_sc = opt.lam_sc)
-    time_loss_fun = timeLoss(lam_seg = opt.lam_seg, 
-                lam_energy = opt.lam_energy,
-                lam_phase = opt.lam_phase)
+    spec_loss_fun = specLoss(lam_mag = Config.lam_mag, lam_sc = Config.lam_sc)
+    time_loss_fun = timeLoss(lam_seg = Config.lam_seg, 
+                lam_energy = Config.lam_energy,
+                lam_phase = Config.lam_phase)
 
     window = torch.hann_window(Config.n_fft).to(device)
     mel_basis = torch.from_numpy(build_mel_basis()).to(device)
@@ -142,10 +142,10 @@ def train(config):
             inp_mel = get_mel_pytorch(inp_time, Config.n_fft, Config.hop_length, 
                                         Config.win_size,window, mel_basis)
 
-            out_time = model(inp_mel, cuda=True)
+            pred_time = model(inp_mel, cuda=True)
 
             ## check here the extra dimension/ unsqueeze
-            out_mel = get_mel_pytorch(out_time, Config.n_fft, Config.hop_length,
+            pred_mel = get_mel_pytorch(out_time, Config.n_fft, Config.hop_length,
                                         Config.win_size, window, mel_basis)
 
             import pdb; pdb.set_trace()
@@ -153,12 +153,11 @@ def train(config):
             optim.zero_grad()
 
             ## multiple losses
-
-            loss_mel = mel_recon_loss(recon_pred_mel, recon_gt_mel)
-            loss_spec = spec_loss_fun(pred_time, gt_time)
-            loss_time = time_loss_fun(pred_time, gt_time)
+            loss_mel = mel_recon_loss(pred_mel, inp_mel)
+            loss_spec = spec_loss_fun(pred_time, inp_time)
+            loss_time = time_loss_fun(pred_time, inp_time)
             
-            loss = opt.lam_mel*loss_mel + loss_spec + loss_time
+            loss = Config.lam_mel*loss_mel + loss_spec + loss_time
 
             ## log losses
             losses_std_avg += loss.item()
@@ -207,29 +206,49 @@ def train(config):
 
                 # validation error
                 tot_val_loss = 0.0
+                tot_val_loss_mel, tot_val_loss_spec, tot_val_loss_time = 0.0, 0.0, 0.0
                 with torch.no_grad():
                     for j, batch in enumerate(val_loader):
                         # prepare input
-                        inp_time = batch['wav'].to(device)
+                        inp_val_time = batch['wav'].to(device)
+                        inp_val_mel = get_mel_pytorch(inp_val_time, Config.n_fft, Config.hop_length,
+                                        Config.win_size, window, mel_basis)
 
-                        # convert the input time signal to melspectrogram
-                        # inp_mel 
+                        # output
+                        pred_val_time = model(inp_val_mel, cuda=True)
+                        pred_val_mel = get_mel_pytorch(out_val_time, Config.n_fft, Config.hop_length,
+                                        Config.win_size, window, mel_basis)
 
-                        out_time = model(inp_mel, cuda=True)
-                        loss = loss_fn(out_time, inp_time)
+                        # loss calculation
+                        loss_mel_val = mel_recon_loss(pred_val_mel, inp_val_mel)
+                        loss_spec_val = spec_loss_fun(pred_val_time, inp_val_time)
+                        loss_time_val = time_loss_fun(pred_val_time, inp_val_time)
+                        
+                        loss_val = Config.lam_mel*loss_mel_val + loss_spec_val + loss_time_val
+
+                        tot_val_loss_mel += loss_mel_val.item()
+                        tot_val_loss_spec += loss_spec_val.item()
+                        tot_val_loss_time += loss_time_val.item()
                         tot_val_loss += loss.item()
                 
                 tot_val_loss /= len(list(val_loader))
+                tot_val_loss_mel /= len(list(val_loader))
+                tot_val_loss_spec /= len(list(val_loader))
+                tot_val_loss_time /= len(list(val_loader))
+
                 sw.add_scalar("val/loss", tot_val_loss, steps)
+                sw.add_scalar("val/loss_mel", tot_val_loss_mel, steps)
+                sw.add_scalar("val/loss_spec", tot_val_loss_spec, steps)
+                sw.add_scalar("val/loss_time", tot_val_loss_time, steps)
 
                 # generate samples - check the generated samples is same for all runs
-                
                 for j, qidx in enumerate(qual_sample_idcs):
                     # prepare input
                     inp_time = batch['wav'].to(device)
 
                     # convert the input time signal to melspectrogram
-                    # inp_mel 
+                    inp_mel = get_mel_pytorch(inp_time, Config.n_fft, Config.hop_length,
+                                        Config.win_size, window, mel_basis) 
 
                     out_time = model(inp_mel, cuda=True)
                     
