@@ -1,7 +1,6 @@
 import torch
 import os
 import argparse
-import json
 import time
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -13,7 +12,7 @@ from model.util import load_try, build_mel_basis, tr_amp_to_db, tr_normalize, tr
 
 
 from config import Config
-from utils.utils import load_checkpoint, scan_checkpoint, save_checkpoint, build_env, AttrDict, get_mel_pytorch
+from utils.utils import load_checkpoint, scan_checkpoint, save_checkpoint, build_env, AttrDict, get_mel_pytorch, load_config
 
 from losses import timeLoss, specLoss
 
@@ -45,13 +44,7 @@ class Vocoder(torch.nn.Module):
         wav_re = self.model(mel)
         return wav_re
 
-def load_config(filepath):
-    with open(filepath) as f:
-        data = f.read()
 
-    json_config = json.loads(data)
-    h = AttrDict(json_config)
-    return h
 
 def train(config):
     torch.cuda.manual_seed(config.seed)

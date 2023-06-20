@@ -2,6 +2,7 @@ import os
 import torch
 import glob
 import shutil
+import json
 
 def load_checkpoint(filepath, device):
     assert os.path.isfile(filepath)
@@ -46,3 +47,12 @@ def get_mel_pytorch(wav, NFFT, HOP_LEN, WIN_SIZE, WIN, MEL_BASIS):
     mel_torch = mel_torch.unsqueeze(1).permute(0, 1, 3, 2)
 
     return mel_torch
+
+
+def load_config(filepath):
+    with open(filepath) as f:
+        data = f.read()
+
+    json_config = json.loads(data)
+    h = AttrDict(json_config)
+    return h
