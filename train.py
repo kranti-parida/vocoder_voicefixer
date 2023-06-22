@@ -4,7 +4,7 @@ import argparse
 import time
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
+import numpy as np
 
 from dataset import wav_mel_dataset, get_dataset
 from model.generator import Generator
@@ -94,7 +94,9 @@ def train(config):
 
     ## val dataset and dataloader
     val_paths = get_dataset(config.data_path, 'val')
-    val_dataset = wav_mel_dataset(config, val_paths)
+    val_dataset = wav_mel_dataset(config, val_paths, mode='val')
+
+    qual_sample_idcs = np.random.randint(len(val_dataset), size=(config.num_qual_samples,))
 
     train_loader = DataLoader(train_dataset, num_workers=0, shuffle=True, 
                                 batch_size=config.batch_size, pin_memory=True, drop_last=True)
@@ -114,14 +116,13 @@ def train(config):
     tb_ctr = 0
 
     mel_recon_loss = torch.nn.MSELoss(reduction='mean')
-    spec_loss_fun = specLoss(lam_mag = Config.lam_mag, lam_sc = Config.lam_sc)
-    time_loss_fun = timeLoss(lam_seg = Config.lam_seg, 
-                lam_energy = Config.lam_energy,
-                lam_phase = Config.lam_phase)
+    spec_loss_fun = specLoss(lam_mag = config.lam_mag, lam_sc = config.lam_sc)
+    time_loss_fun = timeLoss(lam_seg = config.lam_seg, 
+                lam_energy = config.lam_energy,
+                lam_phase = config.lam_phase)
 
     window = torch.hann_window(Config.n_fft).to(device)
     mel_basis = torch.from_numpy(build_mel_basis()).to(device)
-
 
     for epoch in range(max(0, last_epoch), config.train_epochs):
         start = time.time()
@@ -130,6 +131,7 @@ def train(config):
         for i, batch in enumerate(train_loader):
             start_b = time.time()
             inp_time = batch['wav'].to(device)
+            # import pdb; pdb.set_trace()
             
             ## convert the input time signal to melspectrogram
             inp_mel = get_mel_pytorch(inp_time, Config.n_fft, Config.hop_length, 
@@ -137,11 +139,13 @@ def train(config):
 
             pred_time = model(inp_mel, cuda=True)
 
-            ## check here the extra dimension/ unsqueeze
-            pred_mel = get_mel_pytorch(out_time, Config.n_fft, Config.hop_length,
-                                        Config.win_size, window, mel_basis)
+            pred_time = pred_time.squeeze(1)
+            if pred_time.size(-1) > inp_time.size(-1):
+                pred_time = pred_time[:, :inp_time.size(-1)]
 
-            import pdb; pdb.set_trace()
+            ## check here the extra dimension/ unsqueeze
+            pred_mel = get_mel_pytorch(pred_time, Config.n_fft, Config.hop_length,
+                                        Config.win_size, window, mel_basis)
 
             optim.zero_grad()
 
@@ -150,7 +154,7 @@ def train(config):
             loss_spec = spec_loss_fun(pred_time, inp_time)
             loss_time = time_loss_fun(pred_time, inp_time)
             
-            loss = Config.lam_mel*loss_mel + loss_spec + loss_time
+            loss = config.lam_mel*loss_mel + loss_spec + loss_time
 
             ## log losses
             losses_std_avg += loss.item()
@@ -173,7 +177,7 @@ def train(config):
 
             # checkpointing
             if steps % config.checkpoint_interval == 0 and steps != 0:
-                checkpoint_path = f"{config.checkpoint_path}/voc_{steps:08d}"
+                checkpoint_path = f"{config.checkpoint_path}/voc_{steps:08d}.pth"
                 save_checkpoint(checkpoint_path, {
                     'model': model.state_dict(),
                     'steps': steps,
@@ -209,7 +213,12 @@ def train(config):
 
                         # output
                         pred_val_time = model(inp_val_mel, cuda=True)
-                        pred_val_mel = get_mel_pytorch(out_val_time, Config.n_fft, Config.hop_length,
+                        
+                        pred_val_time = pred_val_time.squeeze(1)
+                        if pred_val_time.size(-1) > inp_val_time.size(-1):
+                            pred_val_time = pred_val_time[:, :inp_val_time.size(-1)]
+                        
+                        pred_val_mel = get_mel_pytorch(pred_val_time, Config.n_fft, Config.hop_length,
                                         Config.win_size, window, mel_basis)
 
                         # loss calculation
@@ -217,17 +226,19 @@ def train(config):
                         loss_spec_val = spec_loss_fun(pred_val_time, inp_val_time)
                         loss_time_val = time_loss_fun(pred_val_time, inp_val_time)
                         
-                        loss_val = Config.lam_mel*loss_mel_val + loss_spec_val + loss_time_val
+                        loss_val = config.lam_mel*loss_mel_val + loss_spec_val + loss_time_val
 
                         tot_val_loss_mel += loss_mel_val.item()
                         tot_val_loss_spec += loss_spec_val.item()
                         tot_val_loss_time += loss_time_val.item()
-                        tot_val_loss += loss.item()
+                        tot_val_loss += loss_val.item()
                 
                 tot_val_loss /= len(list(val_loader))
                 tot_val_loss_mel /= len(list(val_loader))
                 tot_val_loss_spec /= len(list(val_loader))
                 tot_val_loss_time /= len(list(val_loader))
+
+                print(f"Steps: {steps}, Val Loss: {tot_val_loss:4.3f}")
 
                 sw.add_scalar("val/loss", tot_val_loss, steps)
                 sw.add_scalar("val/loss_mel", tot_val_loss_mel, steps)
@@ -236,8 +247,10 @@ def train(config):
 
                 # generate samples - check the generated samples is same for all runs
                 for j, qidx in enumerate(qual_sample_idcs):
-                    # prepare input
-                    inp_time = batch['wav'].to(device)
+                    batch = val_loader.dataset[qidx]
+                    
+                    inp_time = torch.from_numpy(batch['wav']).to(device)
+                    inp_time = inp_time.unsqueeze(0)
 
                     # convert the input time signal to melspectrogram
                     inp_mel = get_mel_pytorch(inp_time, Config.n_fft, Config.hop_length,
@@ -251,8 +264,9 @@ def train(config):
                 model.train()
             
             steps += 1
-            if steps >= a.training_steps:
+            if steps >= config.training_steps:
                 break
+            torch.cuda.empty_cache()
     
     print(f"Time taken for epoch {epoch+1} is {int(time.time() - start)} sec\n")
         
@@ -260,15 +274,19 @@ def train(config):
 
 def main():
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--checkpoint_path", default="output/vocoder_init") 
     parser.add_argument("--config", default="")
     parser.add_argument("--training_epochs", default=2000, type=int)
     parser.add_argument("--training_steps", default=400000, type=int)
-    parser.add_argument("--stdout_interval", default=20, type=int)
-    parser.add_argument("--checkpoint_interval", default=10000, type=int)
-    parser.add_argument('--summary_interval', default=100, type=int)
-    parser.add_argument('--validation_interval', default=2000, type=int)
+    # parser.add_argument("--stdout_interval", default=20, type=int)
+    # parser.add_argument("--checkpoint_interval", default=10000, type=int)
+    # parser.add_argument('--summary_interval', default=100, type=int)
+    # parser.add_argument('--validation_interval', default=2000, type=int)
+    parser.add_argument("--use_lmdb", action="store_true")
+    parser.add_argument("--stdout_interval", default=5, type=int)
+    parser.add_argument("--checkpoint_interval", default=10, type=int)
+    parser.add_argument('--summary_interval', default=10, type=int)
+    parser.add_argument('--validation_interval', default=20, type=int)
 
     a = parser.parse_args()
     h = load_config(a.config)

@@ -8,8 +8,14 @@
     "adam_b2": 0.98,
     "lr_decay": 0.999,
     "sample_rate":44100,
-    "duration": 4,
+    "duration": 3,
     "train_epochs": 100,
-    "seed": 1111
+    "seed": 1111,
+    "lam_mag":5.0,
+    "lam_sc":5.0,
+    "lam_seg":200.0, 
+    "lam_energy":100.0,
+    "lam_phase":100.0,
+    "lam_mel":50
 
 }
