@@ -130,9 +130,8 @@ def train(config):
 
         for i, batch in enumerate(train_loader):
             start_b = time.time()
-            inp_time = batch['wav'].to(device)
-            # import pdb; pdb.set_trace()
-            
+            inp_time = batch['wav'].to(device).float()
+
             ## convert the input time signal to melspectrogram
             inp_mel = get_mel_pytorch(inp_time, Config.n_fft, Config.hop_length, 
                                         Config.win_size,window, mel_basis)
@@ -207,7 +206,7 @@ def train(config):
                 with torch.no_grad():
                     for j, batch in enumerate(val_loader):
                         # prepare input
-                        inp_val_time = batch['wav'].to(device)
+                        inp_val_time = batch['wav'].to(device).float()
                         inp_val_mel = get_mel_pytorch(inp_val_time, Config.n_fft, Config.hop_length,
                                         Config.win_size, window, mel_basis)
 
@@ -249,7 +248,7 @@ def train(config):
                 for j, qidx in enumerate(qual_sample_idcs):
                     batch = val_loader.dataset[qidx]
                     
-                    inp_time = torch.from_numpy(batch['wav']).to(device)
+                    inp_time = torch.from_numpy(batch['wav']).to(device).float()
                     inp_time = inp_time.unsqueeze(0)
 
                     # convert the input time signal to melspectrogram

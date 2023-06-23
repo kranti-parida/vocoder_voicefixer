@@ -5,7 +5,10 @@ import numpy as np
 import lmdb
 import pydub
 import io
+import time
+import soundfile as sf
 
+eps = 1e-8
 def get_dataset(path, mode):
     with open(os.path.join(path, mode+'.txt'), 'r') as f:
         audios = f.read().splitlines()
@@ -103,7 +106,7 @@ class wav_mel_dataset(torch.utils.data.Dataset):
             fl_bytes = self._read_audio_resample(audiofile)
             if fl_bytes is None:
                 continue
-            key_str = u'audio_{}'.format(os.path.basename(audiofile)).encode('ascii') 
+            key_str = u'audio_{}'.format(audiofile).encode('ascii') 
             if not txn.get(key_str):
                 txn.put(key_str, fl_bytes)
 
@@ -136,17 +139,31 @@ class wav_mel_dataset(torch.utils.data.Dataset):
         
         return audio
 
+    def _cvtBytesToAudioSF(self, bytes):
+        bytes = io.BytesIO(bytes)
+        audio, rate = sf.read(bytes)
+        if rate != self.sr:
+            print(f"Sampling rate is not as desire {self.sr}, rather it has a value {rate}")
+            return None
+        return audio
+
     def __getitem__(self, index):
         audio_path = self.audio_files[index]
-        
         if self.use_lmdb:
             with self.db.begin(write=False) as txn:
-                wav = self._cvtBytesToAudio(txn.get(u'audio_{}'.format(audio_path).encode('ascii')))
-                if audio is None:
+                # st = time.time()
+                bytes = txn.get(u'audio_{}'.format(audio_path).encode('ascii'))
+                # print(f"Time taken to read audio from disk: {time.time()-st}")
+                # st = time.time()
+                wav = self._cvtBytesToAudioSF(bytes)
+                # print(f"Time taken to convert bytes to audio: {time.time()-st}")
+                if wav is None:
                     print(f"Error reading audio file {audio_path}")
                     return None
         else:
+            # st = time.time()
             wav, _ = librosa.load(audio_path, sr=self.sr, mono=True)
+            # print(f"Time taken to read audio: {time.time()-st}")
         
         nsamples = self.sr * self.duration
         
@@ -165,7 +182,7 @@ class wav_mel_dataset(torch.utils.data.Dataset):
         else:
             start = np.random.randint(0, wav.shape[0] - nsamples)
         wav = wav[start : start + nsamples]
-        wav = wav / np.max(np.abs(wav))
+        wav = wav / (np.max(np.abs(wav))+eps)
 
         return {
                 'wav': wav,
@@ -177,13 +194,20 @@ class wav_mel_dataset(torch.utils.data.Dataset):
 
 if __name__ == '__main__':
     config_path = './configs/vocoder.json'
-    mode = 'val'
+    mode = 'train'
     from utils.utils import load_config
     config = load_config(config_path)
+    config.use_lmdb = False
     file_list = get_dataset(config.data_path, mode)
-    print(len(file_list))
-    import pdb; pdb.set_trace()
-    datast = wav_mel_dataset(config, file_list)
-    print(len(datast))
-    print(datast[0]['wav'].shape)
-    print(datast[0]['path'])
+    datast = wav_mel_dataset(config, file_list, mode=mode)
+    dataloader = torch.utils.data.DataLoader(datast, batch_size=1, shuffle=False, 
+                                num_workers=0, drop_last=False)
+    
+    st = time.time()
+    for idx, data in enumerate(dataloader):
+        if idx > 100:
+            break
+        continue
+        
+
+    print(f"Time taken to load data: {time.time()-st}")
