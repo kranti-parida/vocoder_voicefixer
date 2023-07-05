@@ -1,3 +1,8 @@
+## adversarial loss in evaluation
+## add model for discriminator
+## change the parameters appropriately
+
+
 import torch
 import os
 import argparse
@@ -8,6 +13,7 @@ import numpy as np
 
 from dataset import wav_mel_dataset, get_dataset
 from model.generator import Generator
+from model.vocoder_discriminator import MultiScaleDiscriminator, MultiBandDiscriminator
 from model.util import load_try, build_mel_basis, tr_amp_to_db, tr_normalize, tr_pre
 
 
@@ -114,6 +120,8 @@ def train(config):
     loss_mel_tb_avg, loss_spec_tb_avg, loss_time_tb_avg = 0.0, 0.0, 0.0
     std_ctr = 0
     tb_ctr = 0
+    adv_loss, loss_adv_tb_avg = 0.0, 0.0
+    loss_d, loss_dsc_tb_avg = 0.0, 0.0 
 
     mel_recon_loss = torch.nn.MSELoss(reduction='mean')
     spec_loss_fun = specLoss(lam_mag = config.lam_mag, lam_sc = config.lam_sc)
@@ -155,17 +163,80 @@ def train(config):
             
             loss = config.lam_mel*loss_mel + loss_spec + loss_time
 
+            if epoch > opt.discriminator_train_start_epoch:
+                # generator
+                disc_fake, disc_fake_subband, disc_fake_freq = model_dsc(pred_time.unsqueeze(1))
+                disc_real, disc_real_subband, disc_real_freq = model_dsc(gt_time.unsqueeze(1))
+
+                adv_loss_multi_scale = 0.0
+                for (_, score_fake), (_, score_real) in zip(disc_fake, disc_real):
+                    adv_loss_multi_scale += criterion(score_fake, torch.ones_like(score_fake))
+                adv_loss_multi_scale /= len(disc_fake)
+                
+                adv_loss_mulit_band = 0.0
+                for (_, score_fake), (_, score_real) in zip(disc_fake_subband, disc_real_subband):
+                    adv_loss_mulit_band += criterion(score_fake, torch.ones_like(score_fake))
+                adv_loss_mulit_band /= len(disc_fake_subband)
+
+                # Frequency Discriminator
+                adv_loss_freq = criterion(disc_fake_freq, torch.ones_like(disc_fake_freq))
+
+                adv_loss = (adv_loss_multi_scale + adv_loss_mulit_band + adv_loss_freq)/3.0
+            
+                loss += opt.lambda_adv * adv_loss
+                adv_loss = adv_loss.item() 
+
+            loss.backward()
+            optim.step()
+
+            # discriminator
+            if epoch > opt.discriminator_train_start_epoch:
+                _, _, fake_audio = model(inp_freq)
+
+                fake_audio = fake_audio.detach()
+                optimizer_d.zero_grad()
+
+                disc_fake, disc_subband_fake, disc_fake_freq = model_dsc(fake_audio)
+                disc_real, disc_subband_real, disc_real_freq = model_dsc(gt_time.unsqueeze(1))
+                
+                # Time Domain multiscale Discriminator
+                loss_d_real, loss_d_fake = 0.0, 0.0
+                for (_, score_fake), (_, score_real) in zip(disc_fake, disc_real):
+                    loss_d_real += criterion(score_real, torch.ones_like(score_real))
+                    loss_d_fake += criterion(score_fake, torch.zeros_like(score_fake))
+                loss_d_real = loss_d_real / len(disc_real) # len(disc_real) = 3
+                loss_d_fake = loss_d_fake / len(disc_fake) # len(disc_fake) = 3
+
+                # Time Domain subband Discriminator
+                loss_d_subband_real, loss_d_subband_fake = 0.0, 0.0
+                for (_, score_fake), (_, score_real) in zip(disc_subband_fake, disc_subband_real):
+                    loss_d_subband_real += criterion(score_real, torch.ones_like(score_real))
+                    loss_d_subband_fake += criterion(score_fake, torch.zeros_like(score_fake))
+                loss_d_subband_real = loss_d_subband_real / len(disc_subband_real) # len(disc_real) = 3
+                loss_d_subband_fake = loss_d_subband_fake / len(disc_subband_fake) # len(disc_fake) = 3
+
+                # Frequency Discriminator
+                loss_d_fake_freq = criterion(disc_fake_freq, torch.zeros_like(disc_fake_freq))
+                loss_d_real_freq = criterion(disc_real_freq, torch.ones_like(disc_real_freq))
+
+                loss_d = loss_d_real + loss_d_fake + loss_d_subband_real + loss_d_subband_fake + loss_d_fake_freq + loss_d_real_freq
+                loss_d = loss_d / 6.0
+
+                loss_d.backward()
+                optim_d.step()
+                loss_d = loss_d.item()
+
             ## log losses
             losses_std_avg += loss.item()
             losses_tb_avg += loss.item()
             loss_mel_tb_avg += loss_mel.item()
             loss_spec_tb_avg += loss_spec.item()
             loss_time_tb_avg += loss_time.item()
+            loss_adv_tb_avg += adv_loss
+            loss_dsc_tb_avg += loss_d
+
             std_ctr += 1
             tb_ctr += 1
-
-            loss.backward()
-            optim.step()
 
             # STDOUT logging
             if steps % config.stdout_interval == 0:
@@ -192,8 +263,11 @@ def train(config):
                 sw.add_scalar("training/loss_mel_avg", loss_mel_tb_avg, steps)
                 sw.add_scalar("training/loss_spec_avg", loss_spec_tb_avg, steps)
                 sw.add_scalar("training/loss_time_avg", loss_time_tb_avg, steps)
+                sw.add_scalar("training/loss_generator", loss_adv_tb_avg, steps)
+                sw.add_scalar("training/loss_discriminator", loss_dsc_tb_avg, steps)
                 losses_tb_avg = 0.0
                 loss_mel_tb_avg, loss_spec_tb_avg, loss_time_tb_avg = 0.0, 0.0, 0.0
+                loss_adv_tb_avg, loss_dsc_tb_avg = 0.0, 0.0
                 tb_ctr = 0
 
             if steps % config.validation_interval == 0:
